@@ -1,0 +1,52 @@
+{
+  "name": "dsh-plugin-publish",
+  "displayName": "DSH Plugin Publish",
+  "description": "Publish a DSH plugin to GitHub in one command: validates the manifest and bundle identifiers, creates the repo, uploads the tree, sets the required topic, and writes the plugin-market catalog entry.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "gty2408 <1738813647@qq.com>",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "publish",
+    "github",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gty2408/dsh-plugin-publish.git"
+  },
+  "homepage": "https://github.com/Gty2408/dsh-plugin-publish#readme",
+  "bugs": {
+    "url": "https://github.com/Gty2408/dsh-plugin-publish/issues"
+  },
+  "type": "module",
+  "bin": {
+    "dsh-plugin-publish": "./lib/cli.mjs"
+  },
+  "main": "./lib/preflight.mjs",
+  "exports": {
+    ".": "./lib/preflight.mjs",
+    "./github": "./lib/github.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "test",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node test/run.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

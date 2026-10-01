@@ -1,0 +1,4 @@
+# Register the /publish-plugin command.
+- insert:
+    - id: dsh-plugin-publish
+      name: dsh-plugin-publish
