@@ -26,9 +26,10 @@
   "bin": {
     "dsh-plugin-publish": "./lib/cli.mjs"
   },
-  "main": "./lib/preflight.mjs",
+  "main": "./lib/index.js",
   "exports": {
-    ".": "./lib/preflight.mjs",
+    ".": "./lib/index.js",
+    "./preflight": "./lib/preflight.mjs",
     "./github": "./lib/github.mjs",
     "./package.json": "./package.json"
   },
