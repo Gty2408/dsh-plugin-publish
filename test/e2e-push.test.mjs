@@ -56,7 +56,7 @@ writeFileSync(join(dir, "test/x.test.mjs"), "// probe\n");
 let registered;
 plugin.apply({ commands: { register: (d) => { registered = d; } }, config: { token: TOKEN, owner: "Gty2408", branch: "main" } });
 
-const out = await registered.handler({ input: `${dir} --push --repo ${REPO} --category dev` });
+const out = await registered.handler({ rawInput: `${dir} --push --repo ${REPO} --category dev` });
 console.log("\n--- handler output ---");
 console.log(out.text);
 console.log("---\n");

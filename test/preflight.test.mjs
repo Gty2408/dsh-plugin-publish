@@ -190,26 +190,26 @@ check("patchNameOf reads the inserted name", patchNameOf(VALID["cordis.patch.yml
 	check("command has a handler", typeof registered?.handler === "function");
 
 	const dir = make("plugin-half", VALID);
-	const out = await registered.handler({ input: dir });
+	const out = await registered.handler({ rawInput: dir });
 	check("handler returns a CommandResult", out?.kind === "success", JSON.stringify(out)?.slice(0, 80));
 	check("handler reports readiness", out.text.includes("Ready to publish"), out.text.split("\n").slice(-3).join(" | "));
 	check("handler shows the push form", out.text.includes("--push"));
 
 	const badDir = make("plugin-half-bad", { "package.json": JSON.stringify({ name: "x", dsh: { client: {} } }) });
-	const badOut = await registered.handler({ input: badDir });
+	const badOut = await registered.handler({ rawInput: badDir });
 	check("handler reports blockers", badOut.text.includes("Blocked"), badOut.text.split("\n").slice(0, 6).join(" | "));
 	check("blockers are an error result", badOut.kind === "error", badOut.kind);
 
-	const missing = await registered.handler({ input: join(base, "does-not-exist") });
+	const missing = await registered.handler({ rawInput: join(base, "does-not-exist") });
 	check("handler handles a missing directory", missing.kind === "error" && missing.text.includes("No package.json"));
 
 	/* --- input grammar ------------------------------------------------- */
 	{
 		const d = make("grammar", VALID);
-		check("--repo is parsed", (await registered.handler({ input: `${d} --repo custom-name` })).text.includes("Ready to publish"));
-		check("an unknown option is rejected", (await registered.handler({ input: `${d} --nope` })).kind === "error");
-		check("a missing option value is rejected", (await registered.handler({ input: `${d} --repo` })).kind === "error");
-		check("extra positional arguments are rejected", (await registered.handler({ input: `${d} extra` })).kind === "error");
+		check("--repo is parsed", (await registered.handler({ rawInput: `${d} --repo custom-name` })).text.includes("Ready to publish"));
+		check("an unknown option is rejected", (await registered.handler({ rawInput: `${d} --nope` })).kind === "error");
+		check("a missing option value is rejected", (await registered.handler({ rawInput: `${d} --repo` })).kind === "error");
+		check("extra positional arguments are rejected", (await registered.handler({ rawInput: `${d} extra` })).kind === "error");
 	}
 
 	/* --- push requires a token, and never touches the network without one -- */
@@ -219,7 +219,7 @@ check("patchNameOf reads the inserted name", patchNameOf(VALID["cordis.patch.yml
 		const savedHome = process.env.USERPROFILE;
 		process.env.USERPROFILE = join(base, "empty-home");
 		mkdirSync(process.env.USERPROFILE, { recursive: true });
-		const pushed = await registered.handler({ input: `${d} --push` });
+		const pushed = await registered.handler({ rawInput: `${d} --push` });
 		process.env.USERPROFILE = savedHome;
 		check("--push without a token is refused", pushed.kind === "error", pushed.kind);
 		check("the refusal explains where to put a token", pushed.text.includes(".github-token") && pushed.text.includes("repo"), pushed.text.split("\n").slice(0, 4).join(" | "));
@@ -229,7 +229,7 @@ check("patchNameOf reads the inserted name", patchNameOf(VALID["cordis.patch.yml
 	/* --- a broken plugin is refused even with --push -------------------- */
 	{
 		const d = make("push-broken", { "package.json": JSON.stringify({ name: "x", dsh: { client: {} } }) });
-		const r = await registered.handler({ input: `${d} --push` });
+		const r = await registered.handler({ rawInput: `${d} --push` });
 		check("a broken plugin never reaches the network", r.kind === "error" && r.text.includes("Blocked"), r.kind);
 	}
 }
