@@ -45,7 +45,9 @@ function fakeGitHub(options = {}) {
 		branchStatus: options.branchStatus ?? 404,
 		blobFailAt: options.blobFailAt ?? -1,
 		/* What the repository already has, so the merge can be observed. */
-		topics: options.existingTopics ?? []
+		topics: options.existingTopics ?? [],
+		/* The description already on the repository, for the update path. */
+		description: options.description ?? null
 	};
 	let blobCount = 0;
 
@@ -63,7 +65,14 @@ function fakeGitHub(options = {}) {
 		if (method === "GET" && path === "/user") return json(200, { login: "probe-user" });
 
 		if (method === "GET" && /^\/repos\/[^/]+\/[^/]+$/.test(path)) {
-			return state.repoExists ? json(200, { html_url: `https://github.com${path}` }) : json(404, { message: "Not Found" });
+			return state.repoExists
+				? json(200, { html_url: `https://github.com${path}`, description: state.description })
+				: json(404, { message: "Not Found" });
+		}
+
+		if (method === "PATCH" && /^\/repos\/[^/]+\/[^/]+$/.test(path)) {
+			state.description = body.description;
+			return json(200, { html_url: `https://github.com${path}`, description: state.description });
 		}
 
 		if (method === "POST" && path === "/user/repos") {
@@ -266,6 +275,32 @@ async function withFake(fake, body) {
 	check("the refusal names the file", /huge\.bin/.test(String(error?.message ?? "")), String(error?.message).slice(0, 90));
 	check("no blob was uploaded before the refusal", !fake.calls.some((c) => c.path.endsWith("/git/blobs")));
 	rmSync(big, { recursive: true, force: true });
+}
+
+/* --- 5e. an existing repo's description is refreshed on update ----------- */
+/*
+ * The manifest's description changes far more often than the repository is
+ * recreated, and a stale line on the repository page is the visible half of
+ * the plugin. This pins the PATCH.
+ */
+{
+	const fake = fakeGitHub({ repoExists: true, description: "An old description." });
+	const gh = new GitHub("fake-token");
+	const made = await withFake(fake, () => gh.ensureRepo("probe-user", "probe-repo", "A new description."));
+	check("the existing repo is not recreated", made.created === false);
+	check("a changed description is patched", made.described === true, JSON.stringify(made));
+	check("the description PATCH carries the new text",
+		fake.calls.some((c) => c.method === "PATCH" && c.body?.description === "A new description."),
+		JSON.stringify(fake.calls.filter((c) => c.method === "PATCH").map((c) => c.body)));
+}
+
+/* --- 5f. an unchanged description is not patched ------------------------- */
+{
+	const fake = fakeGitHub({ repoExists: true, description: "Same." });
+	const gh = new GitHub("fake-token");
+	const made = await withFake(fake, () => gh.ensureRepo("probe-user", "probe-repo", "Same."));
+	check("an identical description is left alone", made.described === false, JSON.stringify(made));
+	check("no PATCH is sent", !fake.calls.some((c) => c.method === "PATCH"));
 }
 
 /* --- 6. the retry wrapper ------------------------------------------------ */

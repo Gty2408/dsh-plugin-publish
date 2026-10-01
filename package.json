@@ -2,7 +2,7 @@
   "name": "dsh-plugin-publish",
   "displayName": "DSH Plugin Publish",
   "description": "Publish or update a DSH plugin on GitHub in one command: validates the manifest and bundle identifiers, creates or reuses the repo, uploads the tree as one commit, honours .gitignore, and sets the required topic without dropping yours.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "MIT",
   "author": "gty2408 <1738813647@qq.com>",
   "keywords": [
