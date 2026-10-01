@@ -199,6 +199,18 @@ check("patchNameOf reads the inserted name", patchNameOf(VALID["cordis.patch.yml
 		check("an unknown option is rejected", (await registered.handler({ rawInput: `${d} --nope` })).kind === "error");
 		check("a missing option value is rejected", (await registered.handler({ rawInput: `${d} --repo` })).kind === "error");
 		check("extra positional arguments are rejected", (await registered.handler({ rawInput: `${d} extra` })).kind === "error");
+
+		/* A description is a sentence, so a quoted value must survive as one
+		   token. A plain whitespace split would reject it as extra arguments —
+		   which is the common case, not an edge case. */
+		check("a double-quoted description is one value",
+			(await registered.handler({ rawInput: `${d} --description "adds a delete row"` })).kind === "success");
+		check("a single-quoted description is one value",
+			(await registered.handler({ rawInput: `${d} --description 'adds a delete row'` })).kind === "success");
+		check("an unterminated quote is reported",
+			(await registered.handler({ rawInput: `${d} --description "unterminated` })).text.includes("unterminated"));
+		check("an unquoted multi-word value is still rejected",
+			(await registered.handler({ rawInput: `${d} --description two words` })).kind === "error");
 	}
 
 	/* --- push requires a token, and never touches the network without one -- */
