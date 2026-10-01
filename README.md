@@ -117,6 +117,35 @@ manifest cannot half-publish a repository.
   is a PR to `awesome-dsh-plugin`, which the tool does not open for you.
 - The target repo must be **at least 1 day old** before that PR passes CI.
 
+## Tests
+
+```sh
+node test/run.mjs
+```
+
+The suite is **hermetic**: no network, no credential, no account. Every branch of
+the push path — the empty-repo seed, the blob/tree/commit/ref sequence, the 409
+case, error propagation, retry behaviour — runs against a fake GitHub that speaks
+the same REST surface. `hermetic.test.mjs` enforces that property by scanning the
+other suites for a credential read or an unmocked call.
+
+This is deliberate. An earlier version published to a real repository on every
+run to prove the flow worked; since the `repo` scope cannot delete repositories,
+each run left an artifact the user had to remove by hand. A test that writes to a
+real account is a side effect with assertions attached, not a test.
+
+### Verifying the real network path
+
+The live path is checked once, deliberately, by a script that is **not** part of
+the suite:
+
+```sh
+node test/live-verify.mjs --i-know-this-creates-a-repo
+```
+
+It refuses to run without that flag, reuses one fixed repository name so repeated
+runs never accumulate, and prints the cleanup URL when it finishes.
+
 ## Requirements
 
 - Node.js 20+
