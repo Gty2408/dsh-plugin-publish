@@ -1,13 +1,16 @@
 /**
- * Preflight and catalog-entry tests.
+ * Preflight and install-command tests.
  *
  * These are hermetic: every case builds a throwaway plugin directory, so the
  * checks that guard a real publish are exercised without touching the network.
+ *
+ * The scope is installability — can another machine `dsh plugin add` this? — not
+ * the plugin marketplace, which this tool no longer concerns itself with.
  */
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { preflight, catalogEntry, validateCatalogEntry, bundleIdOf, patchNameOf } from "../lib/preflight.mjs";
+import { preflight, installCommands, bundleIdOf, patchNameOf } from "../lib/preflight.mjs";
 
 const failures = [];
 const check = (label, ok, detail = "") => {
@@ -62,7 +65,9 @@ check("patchNameOf reads the inserted name", patchNameOf(VALID["cordis.patch.yml
 	check("valid plugin has no errors", r.errors.length === 0, JSON.stringify(r.errors));
 	check("valid plugin reports its name", r.facts.name === "dsh-demo");
 	check("valid plugin finds the bundle id", r.facts.bundleId === "dsh-demo");
-	check("valid plugin sees tests", r.facts.hasTests === true);
+	/* A missing test directory is no longer reported: it was a marketplace-review
+	   hint, and the scope is now installability only. */
+	check("preflight no longer reports a marketplace-only fact", r.facts.hasTests === void 0);
 }
 
 /* --- dsh.bundle is the requirement CI enforces ------------------------ */
@@ -94,7 +99,7 @@ check("patchNameOf reads the inserted name", patchNameOf(VALID["cordis.patch.yml
 		"cordis.patch.yml": "- insert:\n    - id: x\n      name: other-name\n"
 	});
 	const r = preflight(dir);
-	check("a mismatched patch row name is rejected", r.errors.some((e) => e.includes("will not load")), JSON.stringify(r.errors));
+	check("a mismatched patch row name is rejected", r.errors.some((e) => e.includes("never load")), JSON.stringify(r.errors));
 }
 
 /* --- other blockers --------------------------------------------------- */
@@ -129,49 +134,33 @@ check("patchNameOf reads the inserted name", patchNameOf(VALID["cordis.patch.yml
 	check("a credential warning does not block", r.errors.length === 0);
 }
 
-/* --- catalog entry ---------------------------------------------------- */
+/* --- install commands -------------------------------------------------- */
+/*
+ * These are the whole point of publishing: another machine must be able to
+ * install the result. Which command works depends on whether that machine has
+ * git, so both are always produced.
+ */
 {
-	const entry = catalogEntry({
-		owner: "Gty2408",
-		repo: "dsh-demo",
-		category: "session",
-		en: "Delete a session: it does things.",
-		zh: "删除会话。"
-	});
-	check("entry url is exact", entry.includes("url: https://github.com/Gty2408/dsh-demo"));
-	check("entry name is owner/repo", entry.includes("name: Gty2408/dsh-demo"));
-	check("entry quotes an en description containing ': '", /^\s*en: '/m.test(entry), entry.split("\n")[4]);
-	check("entry validates clean", validateCatalogEntry(entry).errors.length === 0, JSON.stringify(validateCatalogEntry(entry).errors));
+	const commands = installCommands({ owner: "Gty2408", repo: "dsh-demo" });
+	check("the git form names owner/repo", commands.withGit === "dsh plugin --profile desktop add github:Gty2408/dsh-demo", commands.withGit);
+	check("the no-git form uses codeload", commands.withoutGit.includes("codeload.github.com/Gty2408/dsh-demo/tar.gz/HEAD"), commands.withoutGit);
+	check("no pinned form without a commit", commands.pinned === void 0);
 }
 {
-	check("an unquoted ': ' description is rejected", (() => {
-		const bad = "url: https://github.com/a/b\nname: a/b\ncategory: session\ndescription:\n  en: Vision toolkit: OCR and more.\n";
-		return validateCatalogEntry(bad).errors.some((e) => e.includes("must be quoted"));
-	})());
+	const commands = installCommands({ owner: "a", repo: "b", commit: "0123456789abcdef0123456789abcdef01234567" });
+	check("a pinned form appears with a commit", typeof commands.pinned === "string", String(commands.pinned));
+	check("the pinned form carries the commit", commands.pinned.includes("0123456789abcdef0123456789abcdef01234567"));
+	check("the pinned form does not use HEAD", !commands.pinned.includes("/HEAD"));
 }
 {
-	check("a hand-written npm: key is rejected", (() => {
-		const bad = "url: https://github.com/a/b\nname: a/b\ncategory: session\nnpm: a\n";
-		return validateCatalogEntry(bad).errors.some((e) => e.includes("npm:"));
-	})());
+	/* An empty commit must not produce a broken URL ending in a slash. */
+	const commands = installCommands({ owner: "a", repo: "b", commit: "" });
+	check("an empty commit produces no pinned form", commands.pinned === void 0);
 }
 {
-	check("an unknown top-level key is rejected", (() => {
-		const bad = "url: https://github.com/a/b\nname: a/b\ncategory: session\nstars: 5\n";
-		return validateCatalogEntry(bad).errors.some((e) => e.includes("stars"));
-	})());
-}
-{
-	check("an invalid category throws when generating", (() => {
-		try { catalogEntry({ owner: "a", repo: "b", category: "nope", en: "x." }); return false; }
-		catch { return true; }
-	})());
-}
-{
-	check("a non-github url is rejected", (() => {
-		const bad = "url: https://gitlab.com/a/b\nname: a/b\ncategory: session\n";
-		return validateCatalogEntry(bad).errors.some((e) => e.includes("url must be"));
-	})());
+	const commands = installCommands({ owner: "a", repo: "b" });
+	check("both commands target the same repo", commands.withGit.includes("a/b") && commands.withoutGit.includes("a/b"));
+	check("neither command leaks a token", !commands.withGit.includes("gh") && !commands.withoutGit.includes("ghp"));
 }
 
 /* --- the plugin half's contract --------------------------------------- */

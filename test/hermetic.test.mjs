@@ -56,5 +56,31 @@ check("the live script requires an explicit flag", live.includes("--i-know-this-
 check("the live script reuses one repo name", /const REPO = "dsh-plugin-publish-live-verify"/.test(live));
 check("the live script prints a cleanup url", live.includes("/settings"));
 
+/* --- no token-shaped literal anywhere in the package ---------------------- */
+/*
+ * GitHub's secret scanning rejects a push whose content contains a token-shaped
+ * string, and it is right to: a real token in a public repository is compromised
+ * the moment it lands. An earlier version of secrets.test.mjs pasted a live token
+ * in as a fixture and the push failed with "Secret detected in content".
+ *
+ * So this scans every shipped file. A test that needs a token-shaped input must
+ * build it at runtime from inert fragments.
+ */
+const TOKEN_LITERAL = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{22,})/;
+const ROOT = join(here, "..");
+const shipped = [];
+const collect = (dir, rel) => {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (entry.name === "node_modules" || entry.name === ".git") continue;
+		const r = rel === "" ? entry.name : `${rel}/${entry.name}`;
+		if (entry.isDirectory()) collect(join(dir, entry.name), r);
+		else if (/\.(mjs|js|json|md|yml)$/.test(entry.name)) shipped.push(r);
+	}
+};
+collect(ROOT, "");
+
+const tainted = shipped.filter((rel) => TOKEN_LITERAL.test(readFileSync(join(ROOT, rel), "utf8")));
+check("no shipped file contains a token-shaped literal", tainted.length === 0, tainted.join(", "));
+
 console.log(failures.length === 0 ? "\nALL PASS — the suite cannot touch a real account" : `\n${failures.length} FAILED`);
 process.exit(failures.length === 0 ? 0 : 1);
