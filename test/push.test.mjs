@@ -22,10 +22,10 @@
  * which is NOT part of the suite and refuses to run without an explicit flag.
  */
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 
-const { GitHub, resilientFetch } = await import("../lib/github.mjs");
+const { GitHub, resilientFetch, listFilesRespectingGitignore, globToRegExp, parseGitignore } = await import("../lib/github.mjs");
 
 const failures = [];
 const check = (l, ok, d = "") => { if (!ok) failures.push(l); console.log(`${ok ? "PASS" : "FAIL"} ${l}${d ? ` ${d}` : ""}`); };
@@ -43,7 +43,9 @@ function fakeGitHub(options = {}) {
 	const state = {
 		repoExists: options.repoExists ?? false,
 		branchStatus: options.branchStatus ?? 404,
-		blobFailAt: options.blobFailAt ?? -1
+		blobFailAt: options.blobFailAt ?? -1,
+		/* What the repository already has, so the merge can be observed. */
+		topics: options.existingTopics ?? []
 	};
 	let blobCount = 0;
 
@@ -90,7 +92,10 @@ function fakeGitHub(options = {}) {
 		if (method === "POST" && path.endsWith("/git/trees")) return json(201, { sha: "tree-sha" });
 		if (method === "POST" && path.endsWith("/git/commits")) return json(201, { sha: "commit-sha" });
 		if (method === "PATCH" && /\/git\/refs\/heads\//.test(path)) return json(200, { object: { sha: body.sha } });
-		if (method === "PUT" && path.endsWith("/topics")) return json(200, { names: body.names });
+		/* The topics endpoint answers a GET with the current list, and a PUT
+		   replaces it — which is exactly why the merge has to be tested. */
+		if (method === "GET" && path.endsWith("/topics")) return json(200, { names: state.topics });
+		if (method === "PUT" && path.endsWith("/topics")) { state.topics = body.names; return json(200, { names: state.topics }); }
 
 		return json(404, { message: `unhandled ${method} ${path}` });
 	};
@@ -181,6 +186,86 @@ async function withFake(fake, body) {
 	const names = await withFake(fake, () => gh.setTopics("probe-user", "probe-repo", ["dsh-plugin"]));
 	check("topics are sent", names.includes("dsh-plugin"), JSON.stringify(names));
 	check("the topic request targets the topics endpoint", fake.calls.some((c) => c.path.endsWith("/topics")));
+}
+
+/* --- 5b. topics are MERGED, not replaced --------------------------------- */
+/*
+ * The topics endpoint replaces the whole list, so a blind PUT silently drops
+ * whatever the user set by hand. This pins the read-then-merge behaviour.
+ */
+{
+	const fake = fakeGitHub({ existingTopics: ["my-own-topic", "dsh-plugin"] });
+	const gh = new GitHub("fake-token");
+	const names = await withFake(fake, () => gh.setTopics("probe-user", "probe-repo", ["dsh-plugin", "dsh", "cordis"]));
+
+	check("an existing topic survives the write", names.includes("my-own-topic"), JSON.stringify(names));
+	check("the required topics are present", ["dsh-plugin", "dsh", "cordis"].every((t) => names.includes(t)), JSON.stringify(names));
+	check("no topic is duplicated", names.length === new Set(names).size, JSON.stringify(names));
+	const readIndex = fake.calls.findIndex((c) => c.method === "GET" && c.path.endsWith("/topics"));
+	const writeIndex = fake.calls.findIndex((c) => c.method === "PUT" && c.path.endsWith("/topics"));
+	check("the current topics are read before writing", readIndex !== -1 && readIndex < writeIndex, `read@${readIndex} write@${writeIndex}`);
+}
+
+/* --- 5c. `.gitignore` is honoured on upload ------------------------------ */
+/*
+ * Without this, a build directory or an editor's state is pushed to a public
+ * repository just because it sits next to the source.
+ */
+{
+	const gi = join(tmpdir(), `dsh-gitignore-${process.pid}`);
+	rmSync(gi, { recursive: true, force: true });
+	for (const d of ["lib", "dist", "node_modules", "keep", "deep/nested"]) mkdirSync(join(gi, d), { recursive: true });
+	writeFileSync(join(gi, "package.json"), "{}");
+	writeFileSync(join(gi, "lib/index.js"), "x");
+	writeFileSync(join(gi, "keep/kept.js"), "x");
+	writeFileSync(join(gi, "dist/bundle.js"), "build output");
+	writeFileSync(join(gi, "node_modules/dep.js"), "dependency");
+	writeFileSync(join(gi, "debug.log"), "log");
+	writeFileSync(join(gi, "important.log"), "log");
+	writeFileSync(join(gi, "deep/nested/skip.js"), "x");
+	writeFileSync(join(gi, ".gitignore"), "dist/\n*.log\n!important.log\n");
+	/* A nested ignore file, to prove the walk accumulates rules per directory. */
+	writeFileSync(join(gi, "deep/.gitignore"), "nested/\n");
+
+	const rel = listFilesRespectingGitignore(gi).map((f) => relative(gi, f).split(sep).join("/")).sort();
+	const has = (p) => rel.includes(p);
+	check("an ignored directory is excluded", !has("dist/bundle.js"), JSON.stringify(rel));
+	check("node_modules is excluded", !has("node_modules/dep.js"), JSON.stringify(rel));
+	check("an ignored extension is excluded", !has("debug.log"), JSON.stringify(rel));
+	check("a negated pattern is re-included", has("important.log"), JSON.stringify(rel));
+	check("a nested .gitignore applies", !has("deep/nested/skip.js"), JSON.stringify(rel));
+	check("ordinary sources are kept", has("lib/index.js") && has("keep/kept.js"), JSON.stringify(rel));
+
+	/* The unit-level pieces, so a glob regression is diagnosable. */
+	check("`**/x` matches at any depth", globToRegExp("**/x").test("a/b/x") && globToRegExp("**/x").test("x"));
+	check("`*` does not cross a slash", !globToRegExp("**/*.log").test("a/b.log") === false && !globToRegExp("a/*.log").test("a/b/c.log"));
+	check("a directory-only rule spares a file of the same name", parseGitignore("build/")[0].dirOnly === true);
+	check("a comment is not a rule", parseGitignore("# note\nx").length === 1);
+	rmSync(gi, { recursive: true, force: true });
+}
+
+/* --- 5d. an oversized file is refused, naming the file ------------------- */
+/*
+ * The blobs endpoint takes the content inline. Without this check GitHub
+ * rejects the request and the message does not say which file was too big.
+ */
+{
+	const big = join(tmpdir(), `dsh-bigfile-${process.pid}`);
+	rmSync(big, { recursive: true, force: true });
+	mkdirSync(big, { recursive: true });
+	writeFileSync(join(big, "package.json"), "{}");
+	writeFileSync(join(big, "huge.bin"), Buffer.alloc(41 * 1024 * 1024));
+
+	const fake = fakeGitHub({ repoExists: true, branchStatus: 200 });
+	const gh = new GitHub("fake-token");
+	let error;
+	try {
+		await withFake(fake, () => gh.pushTree("probe-user", "probe-repo", big, {}));
+	} catch (e) { error = e; }
+	check("an oversized file is refused", error !== void 0, error?.message ?? "no error");
+	check("the refusal names the file", /huge\.bin/.test(String(error?.message ?? "")), String(error?.message).slice(0, 90));
+	check("no blob was uploaded before the refusal", !fake.calls.some((c) => c.path.endsWith("/git/blobs")));
+	rmSync(big, { recursive: true, force: true });
 }
 
 /* --- 6. the retry wrapper ------------------------------------------------ */
