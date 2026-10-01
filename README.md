@@ -50,26 +50,77 @@ This tool checks all four before it touches the network, then does the upload.
 
 ## Install
 
-As a CLI:
-
-```sh
-npx dsh-plugin-publish --help
-```
-
-As a DSH plugin (adds a `/publish-plugin` command inside the harness):
+As a DSH plugin — adds a `/publish-plugin` command inside the harness that does
+the whole job:
 
 ```sh
 dsh plugin --profile desktop add github:Gty2408/dsh-plugin-publish
 ```
 
+Then, in any session:
+
+```
+/publish-plugin                    # validate the plugin in the workspace
+/publish-plugin --push             # validate, then publish it
+/publish-plugin ./my-plugin --push --category ui
+```
+
+The token is read from `~/.dsh/.github-token` (a classic token with the `repo`
+scope), or from the plugin's `token` config.
+
+As a standalone CLI, for use outside the harness:
+
+```sh
+npx dsh-plugin-publish ./my-plugin --token <token> --yes
+npx dsh-plugin-publish --help
+```
+
+## Two ways to authenticate
+
+| Route | When |
+| --- | --- |
+| **Device flow** (default) | Interactive. Prints a short code, you authorize in the browser. No token to paste. |
+| **`--token`** | Non-interactive, or when `github.com` is unreachable but `api.github.com` works. |
+
+The device flow talks to `github.com`; the API calls talk to `api.github.com`.
+Those two hosts can differ in reachability, which is why the token route exists.
+
+## What the plugin command does
+
+```
+/publish-plugin [directory] [--push] [--repo name] [--category name]
+```
+
+Without `--push` it validates and prints the catalog entry it would submit.
+With `--push` it validates, then creates the repo, uploads the tree, sets the
+required topic, and writes the catalog entry file.
+
+Validation **always** runs first and never touches the network, so a broken
+manifest cannot half-publish a repository.
+
+## Safety rails
+
+- **Validate before any network use.** A manifest problem aborts locally.
+- **Never force-pushes** unless `force: true` is set in the config.
+- **Never publishes secrets.** Files matching credential patterns are reported.
+- **Reports partial progress.** A failure halfway leaves a repo behind, so the
+  output names what already happened.
+- **Token handling.** The device-flow token is written to a `0600` file outside
+  the repo and deleted when the run ends. It is never printed.
+- **Revocation reminder.** Every run ends by pointing at the revoke page.
+
+## Known limits
+
+- The `repo` scope **cannot delete repositories** — that needs `delete_repo`. So
+  the tool never offers to clean up; deleting is a manual step.
+- The catalog entry is written next to the plugin, not committed: submitting it
+  is a PR to `awesome-dsh-plugin`, which the tool does not open for you.
+- The target repo must be **at least 1 day old** before that PR passes CI.
+
 ## Requirements
 
 - Node.js 20+
-- A GitHub account (device flow needs no pre-created token)
-
-## Status
-
-Early. The happy path is tested; see `test/`.
+- A GitHub account
 
 ## License
 

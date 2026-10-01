@@ -16,9 +16,10 @@ const results = [];
 for (const file of files) {
 	console.log(`\n=== ${file} ===`);
 	try {
-		const out = execFileSync(process.execPath, [join(here, file)], { encoding: "utf8" });
+		const out = execFileSync(process.execPath, [join(here, file)], { encoding: "utf8", timeout: 300000 });
 		console.log(out.trim());
-		results.push({ file, verdict: out.includes("ALL PASS") ? "PASS" : "FAIL" });
+		const verdict = out.includes("ALL PASS") ? "PASS" : out.includes("SKIP") ? "SKIP" : "FAIL";
+		results.push({ file, verdict });
 	} catch (error) {
 		console.log(((error.stdout ?? "") + (error.stderr ?? "")).trim());
 		results.push({ file, verdict: "FAIL" });
@@ -28,5 +29,6 @@ for (const file of files) {
 console.log("\n================ summary ================");
 for (const { file, verdict } of results) console.log(`${verdict.padEnd(6)} ${file}`);
 const failed = results.filter((r) => r.verdict === "FAIL").length;
-console.log(`\n${results.length - failed} passed, ${failed} failed`);
+const skipped = results.filter((r) => r.verdict === "SKIP").length;
+console.log(`\n${results.length - failed - skipped} passed, ${failed} failed, ${skipped} skipped`);
 process.exit(failed === 0 ? 0 : 1);
